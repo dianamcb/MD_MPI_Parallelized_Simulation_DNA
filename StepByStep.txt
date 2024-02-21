@@ -1,0 +1,233 @@
+// Hack Orozco's Force Field editing the file dna.r2b. Comment the whole content.
+//Hackea el campo de fuerzas de Orozco editando el archivo dna.r2b. Comenta todo el contenido.
+
+
+//Generate topology:
+gmx pdb2gmx -f pdb-file.pdb -ter -missing -o complex.gro
+//Select Orozco's Force Field.
+//Select SCP.
+
+
+//Generate some special bonds. A:1-317 A2:1-316 B:1-317 B2:1-319
+//Generate some special bond-angles. A:317-312-1 A2:316-311-1 B:317-312-1 B2:319-314-1
+
+
+//Add the following lines to the end of the files topol_DNA_chain_A2-itp and topol_DNA_chain_B2.itp:
+//With PyMol and VMD you can visualize the chain that has to be fixed. The files topol*.itp show the
+// chains that can be fixed. Among them, you choose one or some of them.
+//An example is the following:
+//For *A.itp
+#ifdef POSRES_A
+#include "posre_Protein_chain_A.itp"
+#endif
+//For *B.itp
+#ifdef POSRES_B
+#include "posre_Protein_chain_B.itp"
+#endif
+
+//Desplace the molecule and define the cell dimensions:
+gmx editconf -f complex.gro -o newbox.gro -center 2.5 3 3.685 -box 10 6 7.37
+//Check that the length of the simulation cell be equal to the length of the DNAs
+
+
+//Solvate
+gmx solvate -cp newbox.gro -cs spc216.gro -o solv.gro -p topol.top
+
+//Generate the input file ions.mdp (you can find it in GROMACS tutorial 3), and modify it.
+; Parameters describing how to find the neighbors of each atom and how to calculate the interactions
+...
+rlist = 1.1
+rcoulomb = 1.1
+rvdw = 1.1
+periodic-molecules = yes ; Consider an infinite molecule
+
+
+//Add ions
+gmx grompp -f ions.mdp -c solv.gro -p topol.top -o ions.tpr
+gmx genion -s ions.tpr -o solv_ions.gro -p topol.top -pname NA -nname CL -neutral -conc 0.137
+//Select SOL.
+
+//Create the files minim.mdp and npt.mdp (you can find them in GROMACS tutorial 3) and modify them.
+//minim.mdp
+; Parameters describing how to find the neighbors of each atom and how to calculate the interactions
+rlist = 1.1
+rcoulomb = 1.1
+rvdw = 1.1
+periodic-molecules = yes ; Consider an infinite molecule
+//npt.mdp
+define = -DEPOSRES -DEPOSRES_A -DPOSRES_B
+; Neighborsearching
+rlist = 1.1
+rcoulomb = 1.1
+rvdw = 1.1
+periodic-molecules = yes ; Consider an infinite molecule
+...
+; Temperature coupling is on
+tc-grps = DNA Water_and_ions ;two coupling groups - more accurate
+
+
+//Execute the following commands. Aim: Equilibrate the system (DNA molecules will show a small displacement).
+gmx grompp -f minim.mdp -c solv_ions.gro -p topol.top -o em.tpr -maxwarn 1
+gmx mdrun -v -deffnm em -nb gpu
+gmx grompp -f npt.mdp -c em.gro -p topol.top -r em.gro -o npt.tpr -maxwarn 1
+gmx mdrun -deffnm npt -nb gpu
+
+
+//Create two groups, the first one is one DNA molecule and the second one is the other DNA.
+//Notice that the residues are shown in the files topol_DNA_chain_B.itp and topol_DNA_chain_B2.itp,
+// as well as topol_DNA_chain_A.itp and topol_DNA_chain_A2.itp.
+gmx make_ndx -f npt.gro
+...
+ > a 1-634
+ > name 11 ADN1
+ > a 635-1269
+ > name 12 ADN2
+ > q
+
+
+//Create and modify the files md_pull.mdp (you can find it in GROMACS tutorial 3)
+define = -DPOSRES_A -DPOSRES_B
+...
+; Run parameters
+dt = 0.002 			#dt = 0.002 = 1 ps y 1 ps = 0.01 nm -> 0.2 = 1 nm	#Prueba con dt = 0.00008 = 1 ps' -> 1 ps' = 0.0004 nm 	
+nsteps = 300,000 ; 600 ps 								#Prueba con 125,000,000 steps = 10,000 ps'
+				#Se recorre un total de 5 nm durante 500 ps.		#Prueba con recorrer un total de 4 nm durante 10 ns'.
+...
+; Output parameters
+nstxtcout = 500 ; every 1 ps (500 cuadros son 1 ps) Se toma una captura cada 1 ps.
+nstxout     = 5000      ; every 10 ps
+nstvout     = 5000
+nstfout     = 500
+nstxtcout   = 500       ; every 1 ps
+...
+; Single-range cutoff scheme
+rlist = 1.1
+rcoulomb = 1.1
+rvdw = 1.1
+periodic-molecules = yes ; Consider an infinite molecule
+...
+; Berendsen temperature coupling is on in two groups
+tc_grps = DNA Water_and_ions
+...
+; Pull code
+pull = yes
+pull_group1_name = ADN1 
+pull_group2_name = ADN2
+pull_coord1_dim = Y N N
+
+
+//Execute the following commands:
+gmx grompp -f md_pull.mdp -c npt.gro -p topol.top -r npt.gro -n index.ndx -t npt.cpt -o pull.tpr -maxwarn 1
+gmx mdrun -deffnm pull -pf pullf.xvg -px pullx.xvg -nb gpu
+
+
+//Execute the script.
+bash summary_distances.sh
+
+
+//Execute the program "rundistances.py" (you need Numpy and Pandas installed) in the path where you have 
+// summary_distances.dat. Example: python3 rundistances.py [size leap between the distances]
+
+
+//You just developed a program that create the following files: npt_pull.sh, md_pull.sh, tpr_files.dat, pullf-files.dat
+
+
+//Create and modify the file npt_umbrella.mdp (you can find it in GROMACS tutorial 3).
+define = -DPOSRES_A -DPOSRES_B
+...
+; Run parameters
+nsteps = 50,000 ; 100 ps
+...
+; Single-range cutoff scheme
+rlist = 1.1
+rcoulomb = 1.1
+rvdw = 1.1
+periodic-molecules = yes ; Consider an infinite molecule
+...
+; Berendsen temperature coupling is on in two groups
+tc_grps = DNA Water_and_ions
+...
+; Pull code
+pull_group1_name = ADN1
+pull_group2_name = ADN2
+pull_coord1_dim = Y N N
+
+
+//Execute the following lines the number of times needed (it depends on summary_distances.dat). Do it each 0.2, from 0.5 to 5.
+//Instead, you can use the bash script generated by Python: npt_pull.sh
+gmx grompp -f npt_umbrella.mdp -c conf6.gro -p topol.top -r conf6.gro -n index.ndx -o npt0.tpr
+...
+gmx grompp -f npt_umbrella.mdp -c conf449.gro -p topol.top -r conf449.gro -n index.ndx -o npt22.tpr
+
+
+//Execute the following lines the number of times needed (it depends on the summary_distances.dat).
+//Instead, you can use the bash script generated by Python: npt_pull.sh. If you executed this script in the previous step, then
+// you don't have to do anything.
+gmx mdrun -deffnm npt0
+...
+gmx mdrun -deffnm npt22
+
+
+//Create and modify the file md_umbrella.mdp (you can find it in GROMACS tutorial 3)
+define = -DPOSRES_A -DPOSRES_B
+...
+; Run parameters
+nsteps = 500,000 ; 1 ns = 1,000 ps
+...
+; Single-range cutoff scheme
+rlist = 1.1
+rcoulomb = 1.1
+rvdw = 1.1
+periodic-molecules = yes ; Consider an infinite molecule
+...
+; Berendsen temperature coupling is on in two groups
+tc_grps = DNA Water_and_ions
+...
+; Pull code
+pull_group1_name = ADN1
+pull_group2_name = ADN2
+pull_coord1_dim = Y N N
+
+
+//Execute the following lines the number of times needed (it depends on summary_distances.dat).
+//Instead, you can use the bash script generated by Python: md_pull.sh
+gmx grompp -f md_umbrella.mdp -c npt0.gro -t npt0.cpt -p topol.top -r npt0.gro -n index.ndx -o umbrella0.tpr
+...
+gmx grompp -f md_umbrella.mdp -c npt22.gro -t npt22.cpt -p topol.top -r npt22.gro -n index.ndx -o umbrella22.tpr
+
+
+//Execute the following lines the number of times needed (it depends on summary_distances.dat)
+//Instead, you can use the bash script generated by Python: md_pull.sh. If you executed this script in the previous step, then
+// you don't have to do anything.
+gmx mdrun -deffnm umbrella0
+...
+gmx mdrun -deffnm umbrella22
+
+
+//Create the file tpr-files.dat. It has to contain the files .tpr that you generated priviously.
+//The Python script rundistances.py generates this file automatically, so you already have it.
+umbrella0.tpr
+umbrella1.tpr
+...
+umbrella22.tpr
+
+
+//Create the file pullf-files.dat. It has to contain the files .xvg that you generated priviously.
+//The Python script rundistances.py generates this file automatically, so you already have it.
+umbrella0_pullf.xvg
+umbrella1_pullf.xvg
+...
+umbrella22_pullf.xvg
+
+
+//Do the PMF analysis through the following command.
+gmx wham -it tpr-files.dat -if pullf-files.dat -o -hist -unit kCal
+
+
+//Read the files histo.xvg and profile.xvg through the following commands.
+xmgrace histo.xvg
+xmgrace profile.xvg
+xmgrace pmfintegrated.xvg
+xmgrace pullf.xvg
+xmgrace pullx.xvg
+
